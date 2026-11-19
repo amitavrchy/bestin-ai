@@ -37,7 +37,7 @@ Errors   = FastAPI style { "detail": str | [...] } with proper HTTP codes.
 - `GET /health` -> `{status:"ok", service:"bestin-ai", version, providers:{llm, embeddings, stt, tts, lipsync}}` (no auth)
 - `GET /v1/voices` -> `[{id:"en-US-AriaNeural", name:"Aria", gender:"Female", locale:"en-US", provider:"edge"}...]` (curated list of ~8–12 nice English voices + a few others; cache)
 - `POST /v1/books/{book_id}/ingest` multipart: `file` (pdf|epub|txt|md), `title` (str, optional) -> 202 `{book_id, status:"queued"}`. Runs in a background thread; replaces existing collection.
-- `GET /v1/books/{book_id}/status` -> `{book_id, status:"queued"|"processing"|"ready"|"failed"|"not_found", progress:0..1, chunks:int, pages:int|null, error:str|null, embedding_model:str}`
+- `GET /v1/books/{book_id}/status` -> `{book_id, status:"queued"|"processing"|"ready"|"failed"|"not_found", progress:0..1, chunks:int, pages:int|null, error:str|null, embedding_model:str, suggested_questions?:[str]}`
 - `DELETE /v1/books/{book_id}` -> 204
 - `POST /v1/ask` JSON `{book_id, question, history:[{role:"user"|"assistant", content}], top_k?:int, speak?:bool=true, voice?:str, style?:"concise"|"detailed"}`
    -> `{answer:str, citations:[Citation], provider:str, model:str, speech: Speech|null}`
