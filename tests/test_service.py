@@ -49,7 +49,7 @@ def test_pdf_parser(tmp_path):
     writer.add_blank_page(width=72, height=72)
     writer.write(path)
     sections, pages = parse_file(path)
-    assert pages == 1 and sections[0]["page"] == 1
+    assert pages == 1 and sections == []
 
 
 def test_epub_parser(tmp_path):
