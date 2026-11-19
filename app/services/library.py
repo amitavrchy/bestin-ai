@@ -61,15 +61,31 @@ def delete(book_id: str):
         except (ValueError, NotFoundError):
             pass
         (root() / "status" / f"{book_id}.json").unlink(missing_ok=True)
+        (root() / "status" / f"{book_id}.job").unlink(missing_ok=True)
         for path in (root() / "uploads").glob(f"{book_id}.*"):
             path.unlink(missing_ok=True)
 
 
-def ingest(book_id: str, path: Path, title: str):
-    record = status(book_id)
+def ingest(book_id: str, path: Path, title: str, job_id: str):
+    def current():
+        marker = root() / "status" / f"{book_id}.job"
+        return marker.exists() and marker.read_text() == job_id
+
+    def update():
+        with lock:
+            if not current():
+                return False
+            save(record)
+            return True
+
+    with lock:
+        if not current():
+            return
+        record = status(book_id)
     try:
         record.update(status="processing", progress=0.1)
-        save(record)
+        if not update():
+            return
         sections, pages = parse_file(path)
         chunks = chunk_sections(sections)
         if not chunks:
@@ -78,9 +94,10 @@ def ingest(book_id: str, path: Path, title: str):
         for i in range(0, len(chunks), 32):
             vectors.extend(embeddings.embed([c["text"] for c in chunks[i : i + 32]]))
             record["progress"] = 0.1 + 0.7 * min(i + 32, len(chunks)) / len(chunks)
-            save(record)
+            if not update():
+                return
         with lock:
-            if not (root() / "status" / f"{book_id}.json").exists():
+            if not current():
                 return
             database = db()
             try:
@@ -122,6 +139,5 @@ def ingest(book_id: str, path: Path, title: str):
             save(record)
     except Exception as exc:
         log.exception("Ingestion failed for %s", book_id)
-        if (root() / "status" / f"{book_id}.json").exists():
-            record.update(status="failed", error=str(exc))
-            save(record)
+        record.update(status="failed", error=str(exc))
+        update()

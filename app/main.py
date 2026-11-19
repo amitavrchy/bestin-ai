@@ -1,6 +1,8 @@
+import json
 import logging
 import re
 import secrets
+import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Literal
@@ -22,9 +24,22 @@ from app.providers.registry import chat, llm_candidates, transcribe
 from app.providers.speech import VOICES, synthesize
 from app.services import library
 
-logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s"
-)
+
+class JsonFormatter(logging.Formatter):
+    def format(self, record: logging.LogRecord) -> str:
+        entry = {
+            "level": record.levelname,
+            "logger": record.name,
+            "message": record.getMessage(),
+        }
+        if record.exc_info:
+            entry["exception"] = self.formatException(record.exc_info)
+        return json.dumps(entry)
+
+
+handler = logging.StreamHandler()
+handler.setFormatter(JsonFormatter())
+logging.basicConfig(level=logging.INFO, handlers=[handler], force=True)
 
 
 @asynccontextmanager
@@ -136,8 +151,14 @@ async def ingest(
             "embedding_model": library.embeddings.model,
         }
         library.save(record)
+        job_id = uuid.uuid4().hex
+        (library.root() / "status" / f"{book_id}.job").write_text(job_id)
     background.add_task(
-        library.ingest, book_id, path, title or Path(file.filename or "Book").stem
+        library.ingest,
+        book_id,
+        path,
+        title or Path(file.filename or "Book").stem,
+        job_id,
     )
     return {"book_id": book_id, "status": "queued"}
 

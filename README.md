@@ -40,3 +40,7 @@ python3 .github/scripts/malware-check.py
 ## Troubleshooting
 
 A failed ingestion includes an error in its status response. Image-only PDFs require OCR before upload. If a model download fails, check network access and retry ingestion. If transcription is unavailable, configure a supported key or use the frontend's browser speech recognition. Edge TTS requires network access; speech errors return 503 from `/v1/tts` and a null speech field on `/v1/ask`. If Rhubarb is unavailable or fails, lip sync falls back to word timings or a text heuristic. Do not expose this internal service directly to browsers; protect the shared token in deployment.
+
+## Verified
+
+On macOS arm64, a keyless local smoke test ingested the Alice excerpt in `tests/fixtures/sample.txt` using FastEmbed, then answered with one citation and an extractive fallback after Pollinations returned 503. Edge TTS 7.3.1 returned MP3 audio with word timings, and Rhubarb 1.14.0 produced visemes. A separate Rhubarb invocation on converted WAV audio also succeeded. No server was left running.
