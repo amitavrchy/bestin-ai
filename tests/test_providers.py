@@ -90,6 +90,7 @@ async def test_edge_word_boundaries(monkeypatch):
 @pytest.mark.parametrize("provider", ["none", "openai"])
 def test_stt_missing_key(configured, monkeypatch, provider):
     monkeypatch.setattr(settings, "stt_provider", provider)
+    monkeypatch.setattr(settings, "local_stt_enabled", False)
     with pytest.raises(LookupError, match="stt_unavailable"):
         stt.transcribe(b"audio", "a.wav")
 
@@ -101,3 +102,23 @@ def test_real_fastembed():
     assert len(vectors) == 2
     assert len(vectors[0]) == len(vectors[1]) == 384
     assert any(vectors[0])
+
+
+def test_local_stt_and_fallback(monkeypatch):
+    from types import SimpleNamespace
+    from app.providers.stt import local
+    monkeypatch.setattr(settings, "stt_provider", "auto")
+    monkeypatch.setattr(settings, "groq_api_key", "")
+    monkeypatch.setattr(settings, "openai_api_key", "")
+    monkeypatch.setattr(settings, "local_stt_enabled", True)
+    model = SimpleNamespace(transcribe=lambda audio, **kwargs: ([SimpleNamespace(text=" Hello ")], SimpleNamespace(language="en")))
+    monkeypatch.setattr(local, "get_model", lambda: model)
+    with TestClient(app) as client:
+        assert client.get("/health").json()["providers"]["stt"] == "local"
+        response = client.post("/v1/stt", headers={"X-Internal-Token": settings.ai_internal_token}, files={"file": ("a.webm", b"audio")})
+        assert response.json() == {"text": "Hello", "language": "en", "provider": "local"}
+    monkeypatch.setattr(settings, "groq_api_key", "key")
+    monkeypatch.setattr(stt.groq, "transcribe", lambda *args: (_ for _ in ()).throw(RuntimeError("failed")))
+    assert stt.transcribe(b"audio", "a.wav")["provider"] == "local"
+    monkeypatch.setattr(settings, "stt_provider", "local")
+    assert stt.candidates()[0][0] == "local"
