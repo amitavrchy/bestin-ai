@@ -1,4 +1,7 @@
 import logging
+import re
+import threading
+import time
 from pathlib import Path
 
 from openai import OpenAI
@@ -6,6 +9,8 @@ from openai import OpenAI
 from app.config import settings
 
 log = logging.getLogger(__name__)
+_pollinations_lock = threading.Lock()
+_pollinations_last = 0.0
 
 
 def client(base_url: str, key: str) -> OpenAI:
@@ -46,14 +51,23 @@ def llm_candidates():
 
 
 def chat(messages: list[dict]) -> tuple[str, str, str] | None:
+    global _pollinations_last
     for name, key, url, model in llm_candidates():
+        if name == "pollinations":
+            with _pollinations_lock:
+                now = time.monotonic()
+                if now - _pollinations_last < 30:
+                    continue
+                _pollinations_last = now
         try:
             response = client(url, key).chat.completions.create(
                 model=model, messages=messages, max_tokens=400
             )
             content = response.choices[0].message.content
-            if content and content.strip():
-                return content.strip(), name, model
+            if content:
+                content = re.sub(r"<think\b[^>]*>.*?</think\s*>", "", content, flags=re.I | re.S).strip()
+                if content:
+                    return content, name, model
         except Exception as exc:
             log.warning("LLM provider %s unavailable: %s", name, type(exc).__name__)
     return None

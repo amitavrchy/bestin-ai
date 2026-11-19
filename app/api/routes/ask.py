@@ -1,3 +1,5 @@
+from app.services.prompts import build_messages
+from app.services.rag import extractive_answer, rewrite_query
 import logging
 from app.schemas.requests import Ask
 from app.providers.registry import chat
@@ -24,7 +26,7 @@ async def ask(body: Ask):
             or metadata.get("embedding_provider") != library.embeddings.provider
         ):
             raise HTTPException(409, "embedding_model_changed_reingest_required")
-        query = library.embeddings.embed([body.question])
+        query = library.embeddings.embed([rewrite_query(body.question, body.history)])
         result = coll.query(
             query_embeddings=query, n_results=min(body.top_k, coll.count())
         )
@@ -49,35 +51,12 @@ async def ask(body: Ask):
                 "score": float(1 - distance),
             }
         )
-    sources = "\n\n".join(
-        f"[{i}] {text}" for i, text in enumerate(result["documents"][0], 1)
-    )
-    messages = [
-        {
-            "role": "system",
-            "content": "Answer only from the numbered book sources. Cite factual claims with [1], [2], etc. If the answer is not in the sources, say you do not know. "
-            + (
-                "Keep the answer around 120 words or less."
-                if body.style == "concise"
-                else "Give a detailed answer."
-            )
-            + "\n\nSources:\n"
-            + sources,
-        }
-    ]
-    messages.extend(m.model_dump() for m in body.history[-6:])
-    messages.append({"role": "user", "content": body.question})
+    messages = build_messages(body.question, body.history, result["documents"][0], body.style)
     response = chat(messages)
     if response:
         answer, provider, model = response
     else:
-        answer = (
-            "I could not generate an answer. Here is a relevant passage from the book: "
-            + citations[0]["text"]
-            + " [1]"
-            if citations
-            else "I do not know based on this book."
-        )
+        answer = extractive_answer(body.question, citations)
         provider, model = "extractive", "extractive"
     speech = None
     if body.speak:
