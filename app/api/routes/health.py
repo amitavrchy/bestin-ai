@@ -1,6 +1,6 @@
 from fastapi import APIRouter
 from app.config import settings
-from app.providers.registry import llm_candidates
+from app.providers.llm.registry import llm_candidates
 
 router = APIRouter()
 

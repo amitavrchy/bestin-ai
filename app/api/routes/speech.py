@@ -1,8 +1,9 @@
 import logging
 from fastapi import File, UploadFile
 from app.schemas.requests import TTS
-from app.providers.registry import transcribe
-from app.providers.speech import VOICES, synthesize
+from app.providers.stt.registry import transcribe
+from app.providers.tts.edge import VOICES
+from app.providers.tts.registry import synthesize
 from fastapi import APIRouter, Depends, HTTPException
 from app.api.deps import auth
 

@@ -7,7 +7,7 @@ from fastapi.testclient import TestClient
 
 from app.config import Settings, settings
 from app.main import app
-from app.providers import registry
+from app.providers.llm import registry
 from app.services import library
 from app.services.ingestion import chunk_sections, parse_file
 from app.services.lipsync import timeline

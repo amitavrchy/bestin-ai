@@ -5,7 +5,7 @@ from fastapi.testclient import TestClient
 
 from app.config import settings
 from app.main import app
-from app.providers.speech import normalize_text
+from app.providers.tts.registry import normalize_text
 from app.services import library
 from app.services.chunking import chunk_sections
 from app.services.lipsync import timeline
@@ -91,7 +91,7 @@ def test_empty_book_fails(tmp_path, monkeypatch):
 
 def test_provider_fallback_strips_reasoning(monkeypatch):
     from unittest.mock import Mock
-    from app.providers import registry
+    from app.providers.llm import registry
 
     monkeypatch.setattr(settings, 'llm_provider', 'auto')
     monkeypatch.setattr(settings, 'groq_api_key', 'test')
@@ -110,7 +110,7 @@ def test_provider_fallback_strips_reasoning(monkeypatch):
 
 
 def test_provider_exhaustion(monkeypatch):
-    from app.providers import registry
+    from app.providers.llm import registry
     monkeypatch.setattr(settings, 'groq_api_key', 'test')
     monkeypatch.setattr(settings, 'gemini_api_key', 'test')
     monkeypatch.setattr(settings, 'openai_api_key', '')

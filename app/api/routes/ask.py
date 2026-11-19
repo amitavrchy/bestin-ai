@@ -2,8 +2,8 @@ from app.services.prompts import build_messages
 from app.services.rag import diversify, extractive_answer, rewrite_query
 import logging
 from app.schemas.requests import Ask
-from app.providers.registry import chat
-from app.providers.speech import synthesize
+from app.providers.llm.registry import chat
+from app.providers.tts.registry import synthesize
 from app.services import library
 from fastapi import APIRouter, Depends, HTTPException
 from app.api.deps import auth, valid_id

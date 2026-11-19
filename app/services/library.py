@@ -7,7 +7,7 @@ import chromadb
 from chromadb.errors import NotFoundError
 
 from app.config import settings
-from app.providers.registry import Embeddings
+from app.providers.embeddings.registry import Embeddings
 from app.services.ingestion import chunk_sections, parse_file
 
 log = logging.getLogger(__name__)
