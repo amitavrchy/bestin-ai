@@ -43,4 +43,4 @@ A failed ingestion includes an error in its status response. Image-only PDFs req
 
 ## Verified
 
-On macOS arm64 on 2026-11-19, a keyless local smoke test ingested the Alice excerpt in `tests/fixtures/sample.txt` using FastEmbed. The ask endpoint returned a Pollinations answer with Edge MP3 audio and Rhubarb visemes. `/v1/tts` returned audio with Rhubarb visemes, `/v1/voices` returned 200, and `/v1/stt` returned 503 without a key. The smoke server was stopped and the test book was deleted. The automated suite has 44 passing tests.
+On macOS arm64 on 2026-11-19, a keyless local smoke test ingested the Alice excerpt in `tests/fixtures/sample.txt` using FastEmbed. The ask endpoint returned a Pollinations answer with Edge MP3 audio and Rhubarb visemes. `/v1/tts` returned audio with Rhubarb visemes, `/v1/voices` returned 200, and `/v1/stt` returned 503 without a key. The smoke server was stopped and the test book was deleted. The automated suite has 45 passing tests.
