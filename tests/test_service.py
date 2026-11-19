@@ -140,12 +140,6 @@ def test_routes(tmp_path, monkeypatch):
             response.status_code == 200 and response.json()["provider"] == "extractive"
         )
         assert response.json()["citations"][0]["chapter"] == "Chapter 1"
-        assert (
-            c.post(
-                "/v1/stt", headers=headers, files={"file": ("a.wav", b"a")}
-            ).status_code
-            == 503
-        )
         assert c.delete("/v1/books/1", headers=headers).status_code == 204
         assert (
             c.get("/v1/books/1/status", headers=headers).json()["status"] == "not_found"

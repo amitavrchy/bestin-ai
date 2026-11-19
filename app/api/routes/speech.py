@@ -1,4 +1,5 @@
 import logging
+from starlette.concurrency import run_in_threadpool
 from fastapi import File, UploadFile
 from app.schemas.requests import TTS
 from app.providers.stt.registry import transcribe
@@ -26,7 +27,7 @@ async def tts(body: TTS):
 @router.post("/v1/stt", dependencies=[Depends(auth)])
 async def stt(file: UploadFile = File(...)):
     try:
-        return transcribe(await file.read(), file.filename or "audio.webm")
+        return await run_in_threadpool(transcribe, await file.read(), file.filename or "audio.webm")
     except LookupError:
         raise HTTPException(503, "stt_unavailable")
     except Exception:

@@ -19,6 +19,8 @@ class Settings(BaseSettings):
     embedding_provider: str = "fastembed"
     embedding_model: str = "BAAI/bge-small-en-v1.5"
     stt_provider: str = "auto"
+    local_stt_model: str = "base.en"
+    local_stt_enabled: bool = True
     tts_provider: str = "edge"
     lipsync_backend: str = "auto"
     data_dir: str = "data"
