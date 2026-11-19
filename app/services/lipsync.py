@@ -43,21 +43,23 @@ def timeline(text: str, duration: float, words: list[dict]) -> list[dict]:
     for word in words:
         start = max(last, min(duration, word["start"]))
         end = max(start, min(duration, word["end"]))
-        if start - last > 0.12:
+        if start > last:
             cues.append({"start": last, "end": start, "value": "X"})
         letters = re.sub("[^a-z]", "", word["word"].lower()) or "a"
+        units = re.findall(r"th|sh|ch|oo|ee|ou|ow|ph|wh|qu|.", letters)
+        units = [{"th": "B", "sh": "C", "ch": "C", "oo": "F", "ee": "C", "ou": "E", "ow": "E", "ph": "G", "wh": "F", "qu": "F"}.get(unit, shape(unit)) for unit in units]
         # Limit very short segments to avoid visually noisy rapid changes.
-        count = min(len(letters), max(1, int((end - start) / 0.06)))
+        count = min(len(units), max(1, int((end - start) / 0.06)))
         for i in range(count):
             a = start + (end - start) * i / count
             b = start + (end - start) * (i + 1) / count
-            value = shape(letters[i * len(letters) // count])
+            value = units[i * len(units) // count]
             if cues and cues[-1]["value"] == value and abs(cues[-1]["end"] - a) < 0.001:
                 cues[-1]["end"] = b
             elif b > a:
                 cues.append({"start": a, "end": b, "value": value})
         last = end
-    if duration - last > 0.12:
+    if duration > last:
         cues.append({"start": last, "end": duration, "value": "X"})
     return cues
 
