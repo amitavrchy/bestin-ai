@@ -105,7 +105,7 @@ def test_routes(tmp_path, monkeypatch):
     monkeypatch.setattr(
         library.embeddings, "embed", lambda texts: [[1.0, 0.0, 0.0] for _ in texts]
     )
-    monkeypatch.setattr("app.main.chat", lambda messages: None)
+    monkeypatch.setattr("app.api.routes.ask.chat", lambda messages: None)
     headers = {"X-Internal-Token": settings.ai_internal_token}
     with TestClient(app) as c:
         assert (
