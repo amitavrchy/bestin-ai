@@ -2,7 +2,7 @@
 
 Internal FastAPI service for book ingestion, grounded question answering, speech and avatar lip sync. The product backend calls this service on port 8001 with `X-Internal-Token`; see [the shared API contract](docs/API_CONTRACT.md).
 
-PDF pages, EPUB chapters and text/Markdown chapters are cleaned and split into overlapping passages. A background job embeds them in batches and stores one cosine Chroma collection per book. Job status is persisted as JSON under `data/`; interrupted jobs are marked failed at startup and can be re-ingested. Questions retrieve passages and supply numbered sources and recent conversation history to an LLM. If all LLM providers fail, an extractive passage is returned. Suggested questions are generated from fixed, general-purpose templates. Embedding model changes require re-ingestion. Speech uses Edge word timings, optionally Rhubarb, and text-based fallbacks.
+PDF pages, EPUB chapters and text/Markdown chapters are cleaned and split into overlapping passages. A background job embeds them in batches and stores one cosine Chroma collection per book. Job status is persisted as JSON under `data/`; interrupted jobs are marked failed at startup and can be re-ingested. Questions retrieve passages and supply numbered sources and recent conversation history to an LLM. If all LLM providers fail, a short, cited extractive answer is returned. Suggested questions are generated from fixed, general-purpose templates. Embedding model changes require re-ingestion. Speech strips citation markers and markup before synthesis, caches results under `data/cache`, and uses Edge word timings, optionally Rhubarb, and text-based fallbacks. The ingestion worker pool runs at most two jobs concurrently. Pollinations requests are spaced at least 30 seconds apart per process; busy requests fall through to extractive answers.
 
 ## Setup
 
@@ -15,7 +15,7 @@ cp .env.example .env
 make run
 ```
 
-The first local embedding call downloads the model to `data/models`; allow network access and disk space. To install the optional Rhubarb binary and its resources, run `scripts/install_rhubarb.sh`. Its macOS release may require Rosetta on Apple Silicon. Audio conversion uses the imageio-ffmpeg bundled binary; a system ffmpeg is not required.
+The first local embedding call downloads the model to `data/models`; allow network access and disk space. Run `scripts/setup.sh` to install dependencies, Rhubarb, and warm the embedding model; alternatively run `scripts/install_rhubarb.sh` to install only Rhubarb. Run `scripts/dev.sh` for the development server. Its macOS release may require Rosetta on Apple Silicon. Audio conversion uses the imageio-ffmpeg bundled binary; a system ffmpeg is not required.
 
 ## Providers and configuration
 
@@ -28,7 +28,7 @@ The first local embedding call downloads the model to `data/models`; allow netwo
 | Gemini | LLM and optional embeddings | [Google AI Studio key](https://aistudio.google.com/apikey) |
 | OpenAI | Optional LLM, embeddings, transcription and speech | [API key](https://platform.openai.com/api-keys) |
 
-Set the shared `AI_INTERNAL_TOKEN` to the same value as the backend. `LLM_PROVIDER` defaults to `auto`; configured Groq, Gemini and OpenAI keys are tried in that order, followed by Pollinations and extractive fallback. Set it to a provider name to prioritize that provider. `EMBEDDING_PROVIDER` selects `fastembed`, `openai`, or `gemini`; `EMBEDDING_MODEL` selects the local model. `STT_PROVIDER` is `auto`, `groq`, or `openai`; without a key the endpoint returns `stt_unavailable`. `TTS_PROVIDER` is `edge` or `openai`. `LIPSYNC_BACKEND` is `auto`, `rhubarb`, `words`, or `heuristic`. `DATA_DIR` controls local storage and `REQUEST_TIMEOUT` controls provider HTTP timeouts. Model and base URL settings for each chat provider can also be overridden through their corresponding environment variables in `app/config.py`. See [.env.example](.env.example).
+Set the shared `AI_INTERNAL_TOKEN` to the same value as the backend. `LLM_PROVIDER` defaults to `auto`; configured Groq, Gemini and OpenAI keys are tried in that order, followed by Pollinations and extractive fallback. Set it to a provider name to prioritize that provider. `EMBEDDING_PROVIDER` selects `fastembed`, `openai`, or `gemini`; `EMBEDDING_MODEL` selects the local model. `STT_PROVIDER` is `auto`, `groq`, or `openai`; without a key the endpoint returns `stt_unavailable`. `TTS_PROVIDER` is `edge` or `openai`. `LIPSYNC_BACKEND` is `auto`, `rhubarb`, `words`, or `heuristic`. `DATA_DIR` controls local storage and `REQUEST_TIMEOUT` controls provider HTTP timeouts. Model and base URL settings for each chat provider can also be overridden through their corresponding environment variables in `app/core/config.py`. See [.env.example](.env.example).
 
 ## Tests
 
@@ -43,4 +43,4 @@ A failed ingestion includes an error in its status response. Image-only PDFs req
 
 ## Verified
 
-On macOS arm64, a keyless local smoke test ingested the Alice excerpt in `tests/fixtures/sample.txt` using FastEmbed, then answered with one citation and an extractive fallback after Pollinations returned 503. Edge TTS 7.3.1 returned MP3 audio with word timings, and Rhubarb 1.14.0 produced visemes. A separate Rhubarb invocation on converted WAV audio also succeeded. No server was left running.
+On macOS arm64 on 2026-11-19, a keyless local smoke test ingested the Alice excerpt in `tests/fixtures/sample.txt` using FastEmbed. The ask endpoint returned a Pollinations answer with Edge MP3 audio and Rhubarb visemes. `/v1/tts` returned audio with Rhubarb visemes, `/v1/voices` returned 200, and `/v1/stt` returned 503 without a key. The smoke server was stopped and the test book was deleted. The automated suite has 44 passing tests.

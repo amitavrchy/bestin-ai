@@ -87,3 +87,44 @@ def test_empty_book_fails(tmp_path, monkeypatch):
         response = client.post('/v1/books/empty/ingest', headers=headers, files={'file': ('empty.txt', b'   ')})
         assert response.status_code == 202
     assert library.status('empty')['status'] == 'failed'
+
+
+def test_provider_fallback_strips_reasoning(monkeypatch):
+    from unittest.mock import Mock
+    from app.providers import registry
+
+    monkeypatch.setattr(settings, 'llm_provider', 'auto')
+    monkeypatch.setattr(settings, 'groq_api_key', 'test')
+    monkeypatch.setattr(settings, 'gemini_api_key', 'test')
+    monkeypatch.setattr(settings, 'openai_api_key', '')
+    monkeypatch.setattr(registry, '_pollinations_last', 0.0)
+    def fake_client(url, key):
+        fake = Mock()
+        if url == settings.gemini_base_url:
+            fake.chat.completions.create.return_value.choices = [Mock(message=Mock(content='<think>secret</think> Answer [1]'))]
+        else:
+            fake.chat.completions.create.side_effect = RuntimeError('unavailable')
+        return fake
+    monkeypatch.setattr(registry, 'client', fake_client)
+    assert registry.chat([{'role': 'user', 'content': 'hello'}])[:2] == ('Answer [1]', 'gemini')
+
+
+def test_provider_exhaustion(monkeypatch):
+    from app.providers import registry
+    monkeypatch.setattr(settings, 'groq_api_key', 'test')
+    monkeypatch.setattr(settings, 'gemini_api_key', 'test')
+    monkeypatch.setattr(settings, 'openai_api_key', '')
+    monkeypatch.setattr(registry, '_pollinations_last', 0.0)
+    def unavailable(*args):
+        raise RuntimeError('unavailable')
+    monkeypatch.setattr(registry, 'client', unavailable)
+    assert registry.chat([{'role': 'user', 'content': 'hello'}]) is None
+
+
+def test_vector_collection_roundtrip(tmp_path, monkeypatch):
+    monkeypatch.setattr(settings, 'data_dir', str(tmp_path))
+    collection = library.db().create_collection('book_roundtrip', metadata={'hnsw:space': 'cosine'})
+    collection.add(ids=['1'], documents=['A story'], embeddings=[[1.0, 0.0]])
+    assert collection.query(query_embeddings=[[1.0, 0.0]], n_results=1)['documents'][0] == ['A story']
+    library.delete('roundtrip')
+    assert not any(c.name == 'book_roundtrip' for c in library.db().list_collections())
