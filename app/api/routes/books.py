@@ -1,7 +1,7 @@
 import uuid
 from pathlib import Path
-from fastapi import BackgroundTasks, File, Form, UploadFile
-from app.services import library
+from fastapi import File, Form, UploadFile
+from app.services import jobs, library
 from fastapi import APIRouter, Depends, HTTPException
 from app.api.deps import auth, valid_id
 
@@ -10,7 +10,6 @@ router = APIRouter()
 @router.post("/v1/books/{book_id}/ingest", status_code=202, dependencies=[Depends(auth)])
 async def ingest(
     book_id: str,
-    background: BackgroundTasks,
     file: UploadFile = File(...),
     title: str = Form(default=""),
 ):
@@ -40,7 +39,7 @@ async def ingest(
         library.save(record)
         job_id = uuid.uuid4().hex
         (library.root() / "status" / f"{book_id}.job").write_text(job_id)
-    background.add_task(
+    jobs.submit(
         library.ingest,
         book_id,
         path,

@@ -3,7 +3,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from app.api.routes import ask, books, health, speech
 from app.core import logging as structured_logging  # noqa: F401
-from app.services import library
+from app.services import jobs, library
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -14,10 +14,14 @@ async def lifespan(app: FastAPI):
             record = library.status(path.stem)
             if record["status"] in ("queued", "processing"):
                 record.update(
-                    status="failed", error="Ingestion interrupted by service restart"
+                    status="failed", error="Ingestion interrupted, please re-ingest"
                 )
                 library.save(record)
-    yield
+    jobs.start()
+    try:
+        yield
+    finally:
+        jobs.shutdown()
 
 
 def create_app() -> FastAPI:

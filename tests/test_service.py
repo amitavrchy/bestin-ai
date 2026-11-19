@@ -1,4 +1,5 @@
 from pathlib import Path
+import time
 from unittest.mock import Mock
 
 import pytest
@@ -125,6 +126,10 @@ def test_routes(tmp_path, monkeypatch):
                 ).status_code
                 == 202
             )
+        for _ in range(200):
+            if c.get("/v1/books/1/status", headers=headers).json()["status"] == "ready":
+                break
+            time.sleep(0.01)
         assert c.get("/v1/books/1/status", headers=headers).json()["status"] == "ready"
         response = c.post(
             "/v1/ask",
