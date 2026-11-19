@@ -128,3 +128,11 @@ def test_vector_collection_roundtrip(tmp_path, monkeypatch):
     assert collection.query(query_embeddings=[[1.0, 0.0]], n_results=1)['documents'][0] == ['A story']
     library.delete('roundtrip')
     assert not any(c.name == 'book_roundtrip' for c in library.db().list_collections())
+
+
+def test_diversify_preserves_chroma_metadata():
+    from app.services.rag import diversify
+    result = {'ids': [['a', 'b', 'c']], 'documents': [['same words here', 'same words here', 'different useful words']], 'distances': [[.1, .11, .12]], 'metadatas': [[{}, {}, {}]], 'included': ['documents', 'distances']}
+    selected = diversify(result, 2)
+    assert selected['ids'][0] == ['a', 'c']
+    assert selected['included'] == result['included']

@@ -41,4 +41,4 @@ def diversify(result: dict, limit: int) -> dict:
         choice = max(remaining, key=value)
         selected.append(choice)
         remaining.remove(choice)
-    return {key: [[values[0][i] for i in selected]] if values is not None else None for key, values in result.items()}
+    return {key: [[values[0][i] for i in selected]] if key in {'ids', 'documents', 'metadatas', 'distances', 'embeddings', 'uris', 'data'} and values is not None else values for key, values in result.items()}
