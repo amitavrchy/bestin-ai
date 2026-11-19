@@ -1,36 +1,28 @@
-from typing import List
-
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(
-        env_file=".env",
-        env_file_encoding="utf-8",
-        extra="ignore",
-    )
-
-    openai_api_key: str = ""
-    openai_chat_model: str = "gpt-4o-mini"
-    openai_embedding_model: str = "text-embedding-3-small"
-    openai_tts_model: str = "tts-1"
-    openai_tts_voice: str = "nova"
-    openai_stt_model: str = "whisper-1"
-    lipsync_backend: str = "auto"
-    chroma_dir: str = "./data/chroma"
-    upload_dir: str = "./data/uploads"
-    audio_dir: str = "./data/audio"
-    books_index: str = "./data/books.json"
-    cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
-    chunk_size: int = 1200
-    chunk_overlap: int = 200
-    retrieval_k: int = 6
-
-    def cors_origin_list(self) -> List[str]:
-        return [part.strip() for part in self.cors_origins.split(",") if part.strip()]
-
-    def openai_is_configured(self) -> bool:
-        return bool(self.openai_api_key and self.openai_api_key.strip())
+    model_config = SettingsConfigDict(env_file='.env', extra='ignore')
+    ai_internal_token: str = 'dev-internal-token'
+    llm_provider: str = 'auto'
+    groq_api_key: str = ''
+    gemini_api_key: str = ''
+    openai_api_key: str = ''
+    groq_base_url: str = 'https://api.groq.com/openai/v1'
+    groq_model: str = 'openai/gpt-oss-120b'
+    gemini_base_url: str = 'https://generativelanguage.googleapis.com/v1beta/openai/'
+    gemini_model: str = 'gemini-3.1-flash-lite'
+    pollinations_base_url: str = 'https://text.pollinations.ai/openai'
+    pollinations_model: str = 'openai-fast'
+    openai_base_url: str = 'https://api.openai.com/v1'
+    openai_model: str = 'gpt-4o-mini'
+    embedding_provider: str = 'fastembed'
+    embedding_model: str = 'BAAI/bge-small-en-v1.5'
+    stt_provider: str = 'auto'
+    tts_provider: str = 'edge'
+    lipsync_backend: str = 'auto'
+    data_dir: str = 'data'
+    request_timeout: float = 20.0
 
 
 settings = Settings()
