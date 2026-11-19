@@ -1,205 +1,169 @@
-import base64
-import os
-import uuid
-from typing import Any, Optional
+import logging
+import re
+import secrets
+from contextlib import asynccontextmanager
+from pathlib import Path
+from typing import Literal
 
-from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
+from fastapi import BackgroundTasks, Depends, FastAPI, File, Form, Header, HTTPException, UploadFile
+from pydantic import BaseModel, Field
 
 from app.config import settings
-from app.providers.openai_provider import (
-    OpenAIChatProvider,
-    OpenAIEmbeddingProvider,
-    OpenAISTTProvider,
-    OpenAITTSProvider,
-)
-from app.schemas import AskResponse, BookListResponse, BookSummary, HealthResponse
-from app.services.ingestion import ALLOWED_EXTENSIONS, detect_kind, ingest_file
-from app.services.library import list_books
-from app.services.lipsync import available_backends, build_timeline
-from app.services.rag import VectorStore, answer_question
+from app.providers.registry import chat, llm_candidates, transcribe
+from app.providers.speech import VOICES, synthesize
+from app.services import library
 
-app = FastAPI(
-    title="Bestin",
-    description="Voice RAG over an uploaded book, with a lip-synced 2D avatar.",
-    version="0.1.0",
-)
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=settings.cors_origin_list(),
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-os.makedirs(settings.upload_dir, exist_ok=True)
-os.makedirs(settings.audio_dir, exist_ok=True)
-os.makedirs(settings.chroma_dir, exist_ok=True)
-
-app.mount("/audio", StaticFiles(directory=settings.audio_dir), name="audio")
+logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(name)s %(message)s')
 
 
-def _embeddings() -> OpenAIEmbeddingProvider:
-    return OpenAIEmbeddingProvider()
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Jobs cannot resume after a process restart; make the interruption visible.
+    directory = library.root() / 'status'
+    if directory.exists():
+        for path in directory.glob('*.json'):
+            record = library.status(path.stem)
+            if record['status'] in ('queued', 'processing'):
+                record.update(status='failed', error='Ingestion interrupted by service restart')
+                library.save(record)
+    yield
 
 
-_store_instance = None  # type: ignore
+app = FastAPI(title='Bestin AI', version='1.0.0', lifespan=lifespan)
 
 
-def _store() -> VectorStore:
-    global _store_instance
-    if _store_instance is None:
-        _store_instance = VectorStore(_embeddings())
-    return _store_instance
+def auth(x_internal_token: str = Header(default='')):
+    if not secrets.compare_digest(x_internal_token, settings.ai_internal_token):
+        raise HTTPException(401, 'invalid_internal_token')
 
 
-@app.get("/health", response_model=HealthResponse)
-def health() -> HealthResponse:
-    info = available_backends()
-    info["mode"] = settings.lipsync_backend
-    return HealthResponse(
-        status="ok",
-        service="bestin",
-        openai_configured=settings.openai_is_configured(),
-        lipsync=info,
-    )
+def valid_id(book_id: str) -> str:
+    if not re.fullmatch(r'[A-Za-z0-9_-]{1,60}', str(book_id)):
+        raise HTTPException(400, 'invalid_book_id')
+    return str(book_id)
 
 
-@app.get("/books", response_model=BookListResponse)
-def get_books() -> BookListResponse:
-    return BookListResponse(books=list_books())
+class Message(BaseModel):
+    role: Literal['user', 'assistant']
+    content: str
 
 
-@app.post("/books", response_model=BookSummary)
-async def upload_book(file: UploadFile = File(...)) -> BookSummary:
-    filename = file.filename or "upload.bin"
-    ext = "." + detect_kind(filename)
-    if ext not in ALLOWED_EXTENSIONS:
-        raise HTTPException(
-            status_code=400,
-            detail="Unsupported file type. Please upload a PDF, EPUB, or TXT file.",
-        )
-    book_id_name = uuid.uuid4().hex[:12]
-    dest_name = "{}{}".format(book_id_name, ext)
-    dest_path = os.path.join(settings.upload_dir, dest_name)
-    payload = await file.read()
-    if not payload:
-        raise HTTPException(status_code=400, detail="The uploaded file was empty.")
-    # ~50 MB guard so a huge scan cannot blow up local ingestion unexpectedly.
-    if len(payload) > 50 * 1024 * 1024:
-        raise HTTPException(status_code=400, detail="File is larger than the 50 MB upload limit.")
-    with open(dest_path, "wb") as handle:
-        handle.write(payload)
+class Ask(BaseModel):
+    book_id: str | int
+    question: str = Field(min_length=1, max_length=10000)
+    history: list[Message] = Field(default_factory=list)
+    top_k: int = Field(default=5, ge=1, le=20)
+    speak: bool = True
+    voice: str | None = None
+    style: Literal['concise', 'detailed'] = 'concise'
+
+
+class TTS(BaseModel):
+    text: str = Field(min_length=1, max_length=10000)
+    voice: str | None = None
+
+
+@app.get('/health')
+def health():
+    candidates = llm_candidates()
+    stt = 'groq' if settings.groq_api_key else 'openai' if settings.openai_api_key else 'unavailable'
+    return {'status': 'ok', 'service': 'bestin-ai', 'version': '1.0.0', 'providers': {'llm': candidates[0][0] if candidates else 'extractive', 'embeddings': settings.embedding_provider, 'stt': stt, 'tts': settings.tts_provider, 'lipsync': settings.lipsync_backend}}
+
+
+@app.get('/v1/voices', dependencies=[Depends(auth)])
+def voices():
+    return VOICES
+
+
+@app.post('/v1/books/{book_id}/ingest', status_code=202, dependencies=[Depends(auth)])
+async def ingest(book_id: str, background: BackgroundTasks, file: UploadFile = File(...), title: str = Form(default='')):
+    book_id = valid_id(book_id)
+    suffix = Path(file.filename or '').suffix.lower()
+    if suffix not in ('.pdf', '.epub', '.txt', '.md'):
+        raise HTTPException(400, 'unsupported_file_type')
+    data = await file.read(50 * 1024 * 1024 + 1)
+    if not data or len(data) > 50 * 1024 * 1024:
+        raise HTTPException(400, 'empty_or_oversized_file')
+    with library.lock:
+        if library.status(book_id)['status'] in ('queued', 'processing'):
+            raise HTTPException(409, 'ingestion_in_progress')
+        upload = library.root() / 'uploads'
+        upload.mkdir(exist_ok=True)
+        path = upload / f'{book_id}{suffix}'
+        path.write_bytes(data)
+        record = {'book_id': book_id, 'status': 'queued', 'progress': 0, 'chunks': 0, 'pages': None, 'error': None, 'embedding_model': library.embeddings.model}
+        library.save(record)
+    background.add_task(library.ingest, book_id, path, title or Path(file.filename or 'Book').stem)
+    return {'book_id': book_id, 'status': 'queued'}
+
+
+@app.get('/v1/books/{book_id}/status', dependencies=[Depends(auth)])
+def book_status(book_id: str):
+    return library.status(valid_id(book_id))
+
+
+@app.delete('/v1/books/{book_id}', status_code=204, dependencies=[Depends(auth)])
+def delete_book(book_id: str):
+    library.delete(valid_id(book_id))
+
+
+@app.post('/v1/ask', dependencies=[Depends(auth)])
+async def ask(body: Ask):
+    book_id = valid_id(str(body.book_id))
+    record = library.status(book_id)
+    if record['status'] == 'not_found':
+        raise HTTPException(404, 'book_not_found')
+    if record['status'] != 'ready':
+        raise HTTPException(409, 'book_not_ready')
     try:
-        record, chunks = ingest_file(dest_path, filename)
-        store = _store()
-        store.add_chunks(record["id"], record["title"], chunks)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail="Ingestion failed: {}".format(exc))
-    return BookSummary(
-        id=record["id"],
-        title=record["title"],
-        filename=record["filename"],
-        kind=record["kind"],
-        pages=record["pages"],
-        chunks=record["chunks"],
-        created_at=record["created_at"],
-    )
-
-
-async def _parse_ask(request: Request) -> Any:
-    content_type = request.headers.get("content-type", "")
-    question = None
-    book_id = None
-    audio_bytes = None
-    audio_name = "question.webm"
-    audio_mime = None
-    if "application/json" in content_type:
-        body = await request.json()
-        question = (body.get("question") or "").strip() or None
-        book_id = (body.get("book_id") or "").strip() or None
+        coll = library.db().get_collection(library.collection_name(book_id))
+        metadata = coll.metadata or {}
+        if metadata.get('embedding_model') != library.embeddings.model or metadata.get('embedding_provider') != library.embeddings.provider:
+            raise HTTPException(409, 'embedding_model_changed_reingest_required')
+        query = library.embeddings.embed([body.question])
+        result = coll.query(query_embeddings=query, n_results=min(body.top_k, coll.count()))
+    except HTTPException:
+        raise
+    except Exception:
+        logging.exception('Retrieval failed')
+        raise HTTPException(500, 'retrieval_failed')
+    citations = []
+    for chunk_id, text, meta, distance in zip(result['ids'][0], result['documents'][0], result['metadatas'][0], result['distances'][0]):
+        citations.append({'chunk_id': chunk_id, 'text': text[:600], 'page': meta.get('page') or None, 'chapter': meta.get('chapter') or None, 'score': float(1 - distance)})
+    sources = '\n\n'.join(f'[{i}] {text}' for i, text in enumerate(result['documents'][0], 1))
+    messages = [{'role': 'system', 'content': 'Answer only from the numbered book sources. Cite factual claims with [1], [2], etc. If the answer is not in the sources, say you do not know. ' + ('Keep the answer around 120 words or less.' if body.style == 'concise' else 'Give a detailed answer.') + '\n\nSources:\n' + sources}]
+    messages.extend(m.model_dump() for m in body.history[-6:])
+    messages.append({'role': 'user', 'content': body.question})
+    response = chat(messages)
+    if response:
+        answer, provider, model = response
     else:
-        form = await request.form()
-        raw_q = form.get("question")
-        question = (str(raw_q).strip() if raw_q is not None else "") or None
-        raw_id = form.get("book_id")
-        book_id = (str(raw_id).strip() if raw_id is not None else "") or None
-        audio = form.get("audio")
-        if audio is not None and hasattr(audio, "read"):
-            audio_bytes = await audio.read()
-            audio_name = getattr(audio, "filename", None) or "question.webm"
-            audio_mime = getattr(audio, "content_type", None)
-    return question, book_id, audio_bytes, audio_name, audio_mime
-
-
-@app.post("/ask", response_model=AskResponse)
-async def ask(request: Request) -> AskResponse:
-    question, book_id, audio_bytes, audio_name, audio_mime = await _parse_ask(request)
-
-    if audio_bytes and not question:
+        answer = 'I could not generate an answer. Here is a relevant passage from the book: ' + citations[0]['text'] + ' [1]' if citations else 'I do not know based on this book.'
+        provider, model = 'extractive', 'extractive'
+    speech = None
+    if body.speak:
         try:
-            question = OpenAISTTProvider().transcribe(audio_bytes, audio_name, audio_mime)
-        except Exception as exc:
-            raise HTTPException(status_code=500, detail="Speech recognition failed: {}".format(exc))
+            speech = await synthesize(answer, body.voice)
+        except Exception:
+            logging.exception('Speech synthesis failed')
+    return {'answer': answer, 'citations': citations, 'provider': provider, 'model': model, 'speech': speech}
 
-    if not question:
-        raise HTTPException(
-            status_code=400,
-            detail="Provide a text question or an audio recording.",
-        )
 
+@app.post('/v1/tts', dependencies=[Depends(auth)])
+async def tts(body: TTS):
     try:
-        answer, sources = answer_question(
-            question,
-            _store(),
-            OpenAIChatProvider(),
-            book_id=book_id,
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail="RAG failed: {}".format(exc))
+        return await synthesize(body.text, body.voice)
+    except Exception:
+        logging.exception('Speech synthesis failed')
+        raise HTTPException(503, 'tts_unavailable')
 
-    audio_id = uuid.uuid4().hex
-    audio_path = os.path.join(settings.audio_dir, "{}.mp3".format(audio_id))
-    tts_info = {}
-    audio_b64 = None
-    audio_mime_out = None
-    audio_url = None
-    visemes = []
-    backend_name = None
 
-    spoken = answer.strip()
-    if spoken:
-        try:
-            tts = OpenAITTSProvider()
-            tts_info = tts.synthesize(spoken, audio_path)
-            visemes, backend_name = build_timeline(
-                audio_path,
-                spoken,
-                mode=(settings.lipsync_backend or "auto").strip().lower(),
-                tts_info=tts_info,
-                stt=OpenAISTTProvider(),
-            )
-            with open(audio_path, "rb") as handle:
-                audio_b64 = base64.b64encode(handle.read()).decode("ascii")
-            audio_mime_out = tts_info.get("mime") or "audio/mpeg"
-            audio_url = "/audio/{}.mp3".format(audio_id)
-        except Exception as exc:
-            # Still return the text answer if TTS or lip-sync fails.
-            backend_name = "none (tts failed: {})".format(exc)
-
-    return AskResponse(
-        question=question,
-        answer=answer,
-        sources=sources,
-        audio_base64=audio_b64,
-        audio_mime=audio_mime_out,
-        audio_url=audio_url,
-        visemes=visemes,
-        lipsync_backend=backend_name,
-    )
+@app.post('/v1/stt', dependencies=[Depends(auth)])
+async def stt(file: UploadFile = File(...)):
+    try:
+        return transcribe(await file.read(), file.filename or 'audio.webm')
+    except LookupError:
+        raise HTTPException(503, 'stt_unavailable')
+    except Exception:
+        logging.exception('Transcription failed')
+        raise HTTPException(502, 'stt_failed')
