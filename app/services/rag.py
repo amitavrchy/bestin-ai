@@ -24,3 +24,21 @@ def extractive_answer(question: str, citations: list[dict]) -> str:
     candidates.sort(key=lambda x: -x[0])
     selected = candidates[:3]
     return ' '.join(f'{sentence} [{i}]' for _, i, sentence in selected) if selected else 'I do not know based on this book.'
+
+
+def diversify(result: dict, limit: int) -> dict:
+    """Select relevant, less-redundant passages using a lexical MMR penalty."""
+    texts = result['documents'][0]
+    if len(texts) <= limit:
+        return result
+    terms = [set(re.findall(r'[a-z]{3,}', text.lower())) for text in texts]
+    remaining = list(range(len(texts)))
+    selected = []
+    while remaining and len(selected) < limit:
+        def value(i):
+            similarity = max((len(terms[i] & terms[j]) / max(1, len(terms[i] | terms[j])) for j in selected), default=0)
+            return 0.75 * (1 - result['distances'][0][i]) - 0.25 * similarity
+        choice = max(remaining, key=value)
+        selected.append(choice)
+        remaining.remove(choice)
+    return {key: [[values[0][i] for i in selected]] if values is not None else None for key, values in result.items()}

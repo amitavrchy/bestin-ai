@@ -1,5 +1,5 @@
 from app.services.prompts import build_messages
-from app.services.rag import extractive_answer, rewrite_query
+from app.services.rag import diversify, extractive_answer, rewrite_query
 import logging
 from app.schemas.requests import Ask
 from app.providers.registry import chat
@@ -28,13 +28,14 @@ async def ask(body: Ask):
             raise HTTPException(409, "embedding_model_changed_reingest_required")
         query = library.embeddings.embed([rewrite_query(body.question, body.history)])
         result = coll.query(
-            query_embeddings=query, n_results=min(body.top_k, coll.count())
+            query_embeddings=query, n_results=min(body.top_k * 3, coll.count())
         )
     except HTTPException:
         raise
     except Exception:
         logging.exception("Retrieval failed")
         raise HTTPException(500, "retrieval_failed")
+    result = diversify(result, body.top_k)
     citations = []
     for chunk_id, text, meta, distance in zip(
         result["ids"][0],
